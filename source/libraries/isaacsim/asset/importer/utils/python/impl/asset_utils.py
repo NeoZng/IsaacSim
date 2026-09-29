@@ -174,6 +174,27 @@ def _find_fixed_base_joint(stage: Usd.Stage, root_link: Usd.Prim, joints: list[U
     return anchors[0] if anchors else None
 
 
+def _find_fixed_root_anchor(stage: Usd.Stage, root_link: Usd.Prim, joints: list[Usd.Prim]) -> Usd.Prim | None:
+    """Find the enabled fixed joint that anchors a root link to the world.
+
+    Args:
+        stage: The USD stage containing the joints and links.
+        root_link: The root rigid-body link prim.
+        joints: Joint prims to inspect (typically all physics joints on *stage*).
+
+    Returns:
+        The fixed joint attaching `root_link` itself to the world, or ``None``.
+    """
+    for joint in _find_fixed_base_joints(stage, root_link, joints):
+        if (
+            joint.IsA(UsdPhysics.FixedJoint)
+            and _get_joint_body(joint, 1) == root_link.GetPath()
+            and UsdPhysics.Joint(joint).GetJointEnabledAttr().Get()
+        ):
+            return joint
+    return None
+
+
 def _detect_fixed_base(stage: Usd.Stage, root_link: Usd.Prim, joints: list[Usd.Prim]) -> bool:
     """Determine whether the articulation is anchored to the world.
 
@@ -234,9 +255,11 @@ def _find_articulation_root_link(stage: Usd.Stage) -> Usd.Prim | None:
 def apply_fix_base(stage: Usd.Stage) -> None:
     """Add a world-to-root fixed joint when the robot is not already world-anchored.
 
-    When a fixed joint is created, move articulation-root authoring from the
-    root rigid body to that joint. Existing world-anchoring joints of any type
-    are preserved unchanged.
+    Move articulation-root authoring from the root rigid body to its world-to-root
+    fixed joint, whether created here or already present. Existing world-anchoring
+    joints are preserved. An articulation anchored by a joint of another type keeps
+    its authoring, since rooting it at that joint would remove the joint's degrees
+    of freedom.
 
     Args:
         stage: The USD stage to modify.
@@ -255,7 +278,8 @@ def apply_fix_base(stage: Usd.Stage) -> None:
 
     existing_anchor = _find_fixed_base_joint(stage, root_link, joints)
     if existing_anchor is not None:
-        _logger.info("Fixed base already present on %s - skipping fix_base.", root_link.GetPath())
+        _logger.info("Fixed base already present on %s - keeping the existing anchor.", root_link.GetPath())
+        fix_articulation_root_for_fixed_base(stage)
         return
 
     _logger.info("Applying fix_base to %s.", root_link.GetPath())
@@ -310,7 +334,10 @@ def fix_articulation_root_for_fixed_base(stage: Usd.Stage) -> int:
 
     A fixed-base articulation is rooted at the world-to-root joint. Moving
     authoring to the joint avoids applying the schema to a geometric hierarchy
-    parent that may carry scale or other non-physics transforms.
+    parent that may carry scale or other non-physics transforms. Only enabled
+    fixed joints that anchor the root link itself are used: an articulation
+    rooted at a revolute, prismatic, or D6 world joint would lose that joint's
+    degrees of freedom.
 
     Args:
         stage: The USD stage to modify.
@@ -337,10 +364,10 @@ def fix_articulation_root_for_fixed_base(stage: Usd.Stage) -> int:
     joints = [prim for prim in stage.Traverse() if prim.IsA(UsdPhysics.Joint)]
     relocated = 0
     for root_body_prim in root_body_prims:
-        world_joint = _find_fixed_base_joint(stage, root_body_prim, joints)
+        world_joint = _find_fixed_root_anchor(stage, root_body_prim, joints)
         if world_joint is None:
-            _logger.warning(
-                "Rigid body %s has no world-anchoring joint - skipping ArticulationRootAPI relocation.",
+            _logger.info(
+                "Rigid body %s has no fixed world-anchoring joint - skipping ArticulationRootAPI relocation.",
                 root_body_prim.GetPath(),
             )
             continue

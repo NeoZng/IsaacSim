@@ -377,8 +377,8 @@ class TestAssetUtils(omni.kit.test.AsyncTestCase):
         self.assertTrue(fix_joint_prim.IsA(UsdPhysics.FixedJoint))
         self.assertTrue(fix_joint_prim.HasAPI(UsdPhysics.ArticulationRootAPI))
 
-    async def test_fix_base_skips_when_already_fixed(self) -> None:
-        """Leave existing fixed-base articulation authoring unchanged."""
+    async def test_fix_base_roots_articulation_at_existing_fixed_joint(self) -> None:
+        """Root an articulation at the fixed joint that already anchors it to the world."""
         stage = _make_stage()
         geometry = UsdGeom.Xform.Define(stage, "/robot/Geometry").GetPrim()
         link = _add_rigid_link(stage, "/robot/Geometry/base")
@@ -389,20 +389,23 @@ class TestAssetUtils(omni.kit.test.AsyncTestCase):
 
         fix_joint_prim = stage.GetPrimAtPath("/robot/fix_base_joint")
         self.assertFalse(fix_joint_prim.IsValid())
-        self.assertTrue(link.HasAPI(UsdPhysics.ArticulationRootAPI))
+        self.assertFalse(link.HasAPI(UsdPhysics.ArticulationRootAPI))
         self.assertFalse(geometry.HasAPI(UsdPhysics.ArticulationRootAPI))
-        self.assertFalse(stage.GetPrimAtPath("/robot/Physics/root_joint").HasAPI(UsdPhysics.ArticulationRootAPI))
+        self.assertTrue(stage.GetPrimAtPath("/robot/Physics/root_joint").HasAPI(UsdPhysics.ArticulationRootAPI))
 
     async def test_fix_base_skips_when_revolute_world_anchor(self) -> None:
-        """Do not add a FixedJoint when any joint type already anchors the robot."""
+        """Keep the articulation root on the link when a revolute joint anchors the robot."""
         stage = _make_stage()
-        _add_rigid_link(stage, "/robot/base")
+        link = _add_rigid_link(stage, "/robot/base")
+        UsdPhysics.ArticulationRootAPI.Apply(link)
         _add_revolute_joint(stage, "/robot/world_rj", None, "/robot/base")
 
         asset_utils.apply_fix_base(stage)
 
         self.assertFalse(stage.GetPrimAtPath("/robot/fix_base_joint").IsValid())
         self.assertTrue(stage.GetPrimAtPath("/robot/world_rj").IsValid())
+        self.assertTrue(link.HasAPI(UsdPhysics.ArticulationRootAPI))
+        self.assertFalse(stage.GetPrimAtPath("/robot/world_rj").HasAPI(UsdPhysics.ArticulationRootAPI))
 
     async def test_fix_base_no_default_prim(self) -> None:
         """apply_fix_base should not crash when no default prim exists."""
@@ -592,6 +595,19 @@ class TestAssetUtils(omni.kit.test.AsyncTestCase):
         self.assertEqual(count, 1)
         self.assertTrue(fixed_joint.HasAPI(UsdPhysics.ArticulationRootAPI))
         self.assertFalse(link.HasAPI(UsdPhysics.ArticulationRootAPI))
+
+    async def test_art_root_not_moved_to_revolute_joint(self) -> None:
+        """ArticulationRootAPI should stay on a rigid body that a revolute joint anchors to the world."""
+        stage = _make_stage()
+        link = _add_rigid_link(stage, "/robot/base")
+        world_joint = _add_revolute_joint(stage, "/robot/world_rj", None, "/robot/base")
+        UsdPhysics.ArticulationRootAPI.Apply(link)
+
+        count = asset_utils.fix_articulation_root_for_fixed_base(stage)
+
+        self.assertEqual(count, 0)
+        self.assertTrue(link.HasAPI(UsdPhysics.ArticulationRootAPI))
+        self.assertFalse(world_joint.HasAPI(UsdPhysics.ArticulationRootAPI))
 
     async def test_art_root_returns_zero_when_none(self) -> None:
         """Return 0 when no articulation root exists."""
