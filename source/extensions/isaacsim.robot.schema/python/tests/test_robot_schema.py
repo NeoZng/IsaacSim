@@ -146,6 +146,31 @@ class TestRobotSchemaUtils(omni.kit.test.AsyncTestCase):
         self.assertIn("/World/Robot", before_paths)
         self.assertIn("/World/Robot/Link1", after_paths)
 
+    async def test_root_joint_targeting_robot_prim_starts_at_rigid_body(self) -> None:
+        """Start the robot at the rigid body of a root joint whose body0 is the robot prim."""
+        robot_prim = UsdGeom.Xform.Define(self._stage, "/World/Robot").GetPrim()
+        links = {}
+        for name in ("base", "hand", "finger_a", "finger_b"):
+            links[name] = UsdGeom.Xform.Define(self._stage, f"/World/Robot/{name}").GetPrim()
+            UsdPhysics.RigidBodyAPI.Apply(links[name])
+        root_joint = UsdPhysics.FixedJoint.Define(self._stage, "/World/Robot/root_joint")
+        root_joint.CreateBody0Rel().SetTargets([robot_prim.GetPath()])
+        root_joint.CreateBody1Rel().SetTargets([links["base"].GetPath()])
+        UsdPhysics.ArticulationRootAPI.Apply(root_joint.GetPrim())
+        for name, body0, body1 in (
+            ("hand_joint", "base", "hand"),
+            ("a_joint", "hand", "finger_a"),
+            ("b_joint", "hand", "finger_b"),
+        ):
+            joint = UsdPhysics.RevoluteJoint.Define(self._stage, f"/World/Robot/{name}")
+            joint.CreateBody0Rel().SetTargets([links[body0].GetPath()])
+            joint.CreateBody1Rel().SetTargets([links[body1].GetPath()])
+
+        robot_schema.ApplyRobotAPI(robot_prim)
+
+        robot_links = robot_prim.GetRelationship(robot_schema.Relations.ROBOT_LINKS.name).GetTargets()
+        self.assertEqual(robot_links[0], links["base"].GetPath())
+
     async def test_get_joint_pose_and_body_relationship(self) -> None:
         """Verify joint pose extraction and body relationship lookup."""
         robot_xform, _, joint = self._create_robot_with_joint()

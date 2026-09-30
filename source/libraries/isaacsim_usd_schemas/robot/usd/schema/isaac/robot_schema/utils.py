@@ -97,6 +97,28 @@ def _find_articulation_root(prim: pxr.Usd.Prim) -> pxr.Usd.Prim | None:
     return None
 
 
+def _get_root_joint_link_path(stage: pxr.Usd.Stage, root_joint: pxr.Usd.Prim) -> pxr.Sdf.Path | None:
+    """Return the path of the link that an articulation root joint attaches to the world.
+
+    A root joint may target a prim without RigidBodyAPI, such as the default prim, as its world side.
+    The first rigid-body target is therefore preferred, then the first target.
+
+    Args:
+        stage: Stage containing the joint.
+        root_joint: Joint prim carrying the ArticulationRootAPI.
+
+    Returns:
+        The path of the root link, or None if the joint has no body targets or is excluded from articulation.
+
+    """
+    body_paths = [GetJointBodyRelationship(root_joint, body_index) for body_index in (0, 1)]
+    for body_path in body_paths:
+        body_prim = stage.GetPrimAtPath(body_path) if body_path else None
+        if body_prim and body_prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+            return body_path
+    return body_paths[0] or body_paths[1]
+
+
 def _collect_deprecated_dof_values(joint_prim: pxr.Usd.Prim) -> dict[str, int]:
     """Collect authored deprecated DOF attributes and their order values.
 
@@ -342,7 +364,7 @@ def _discover_articulation_prims(
     root_joint = None
     if articulation_root.IsA(pxr.UsdPhysics.Joint):
         root_joint = articulation_root
-        candidate_path = GetJointBodyRelationship(root_joint, 0) or GetJointBodyRelationship(root_joint, 1)
+        candidate_path = _get_root_joint_link_path(stage, root_joint)
         if candidate_path:
             root_link = stage.GetPrimAtPath(candidate_path)
     if not root_link:
@@ -1332,7 +1354,7 @@ def _discover_articulation_graph(
     root_joint: pxr.Usd.Prim | None = None
     if articulation_root.IsA(pxr.UsdPhysics.Joint):
         root_joint = articulation_root
-        candidate_path = GetJointBodyRelationship(root_joint, 0) or GetJointBodyRelationship(root_joint, 1)
+        candidate_path = _get_root_joint_link_path(stage, root_joint)
         if candidate_path:
             root_link = stage.GetPrimAtPath(candidate_path)
     if not root_link:
